@@ -1,4 +1,4 @@
-# Ultralytics YOLO 🚀, AGPL-3.0 license
+# Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Model head modules."""
 
 import copy
@@ -23,6 +23,7 @@ class Detect(nn.Module):
 
     dynamic = False  # force grid reconstruction
     export = False  # export mode
+    format = None  # export format
     end2end = False  # end2end
     max_det = 300  # max_det
     shape = None
@@ -31,7 +32,7 @@ class Detect(nn.Module):
     legacy = False  # backward compatibility for v3/v5/v8/v9 models
 
     def __init__(self, nc=80, ch=()):
-        """Initializes the YOLO detection layer with specified number of classes and channels."""
+        """Initialize the YOLO detection layer with specified number of classes and channels."""
         super().__init__()
         self.nc = nc  # number of classes
         self.nl = len(ch)  # number of detection layers
@@ -101,7 +102,7 @@ class Detect(nn.Module):
         # Inference path
         shape = x[0].shape  # BCHW
         x_cat = torch.cat([xi.view(shape[0], self.no, -1) for xi in x], 2)
-        if self.dynamic or self.shape != shape:
+        if self.format != "imx" and (self.dynamic or self.shape != shape):
             self.anchors, self.strides = (x.transpose(0, 1) for x in make_anchors(x, self.stride, 0.5))
             self.shape = shape
 
@@ -119,6 +120,11 @@ class Detect(nn.Module):
             grid_size = torch.tensor([grid_w, grid_h, grid_w, grid_h], device=box.device).reshape(1, 4, 1)
             norm = self.strides / (self.stride[0] * grid_size)
             dbox = self.decode_bboxes(self.dfl(box) * norm, self.anchors.unsqueeze(0) * norm[:, :2])
+        elif self.export and self.format == "imx":
+            dbox = self.decode_bboxes(
+                self.dfl(box) * self.strides, self.anchors.unsqueeze(0) * self.strides, xywh=False
+            )
+            return dbox.transpose(1, 2), cls.sigmoid().permute(0, 2, 1)
         else:
             dbox = self.decode_bboxes(self.dfl(box), self.anchors.unsqueeze(0)) * self.strides
 
@@ -137,9 +143,9 @@ class Detect(nn.Module):
                 a[-1].bias.data[:] = 1.0  # box
                 b[-1].bias.data[: m.nc] = math.log(5 / m.nc / (640 / s) ** 2)  # cls (.01 objects, 80 classes, 640 img)
 
-    def decode_bboxes(self, bboxes, anchors):
+    def decode_bboxes(self, bboxes, anchors, xywh=True):
         """Decode bounding boxes."""
-        return dist2bbox(bboxes, anchors, xywh=not self.end2end, dim=1)
+        return dist2bbox(bboxes, anchors, xywh=xywh and (not self.end2end), dim=1)
 
     @staticmethod
     def postprocess(preds: torch.Tensor, max_det: int, nc: int = 80):
@@ -267,7 +273,7 @@ class Pose(Detect):
         else:
             y = kpts.clone()
             if ndim == 3:
-                y[:, 2::3] = y[:, 2::3].sigmoid()  # sigmoid (WARNING: inplace .sigmoid_() Apple MPS bug)
+                y[:, 2::ndim] = y[:, 2::ndim].sigmoid()  # sigmoid (WARNING: inplace .sigmoid_() Apple MPS bug)
             y[:, 0::ndim] = (y[:, 0::ndim] * 2.0 + (self.anchors[0] - 0.5)) * self.strides
             y[:, 1::ndim] = (y[:, 1::ndim] * 2.0 + (self.anchors[1] - 0.5)) * self.strides
             return y
@@ -275,6 +281,8 @@ class Pose(Detect):
 
 class Classify(nn.Module):
     """YOLO classification head, i.e. x(b,c1,20,20) to x(b,c2)."""
+
+    export = False  # export mode
 
     def __init__(self, c1, c2, k=1, s=1, p=None, g=1):
         """Initializes YOLO classification head to transform input tensor from (b,c1,20,20) to (b,c2) shape."""
@@ -290,7 +298,10 @@ class Classify(nn.Module):
         if isinstance(x, list):
             x = torch.cat(x, 1)
         x = self.linear(self.drop(self.pool(self.conv(x)).flatten(1)))
-        return x if self.training else x.softmax(1)
+        if self.training:
+            return x
+        y = x.softmax(1)  # get final output
+        return y if self.export else (y, x)
 
 
 class WorldDetect(Detect):
@@ -389,7 +400,7 @@ class RTDETRDecoder(nn.Module):
             nh (int): Number of heads in multi-head attention. Default is 8.
             ndl (int): Number of decoder layers. Default is 6.
             d_ffn (int): Dimension of the feed-forward networks. Default is 1024.
-            dropout (float): Dropout rate. Default is 0.
+            dropout (float): Dropout rate. Default is 0.0.
             act (nn.Module): Activation function. Default is nn.ReLU.
             eval_idx (int): Evaluation index. Default is -1.
             nd (int): Number of denoising. Default is 100.
@@ -552,7 +563,6 @@ class RTDETRDecoder(nn.Module):
 
         return embeddings, refer_bbox, enc_bboxes, enc_scores
 
-    # TODO
     def _reset_parameters(self):
         """Initializes or resets the parameters of the model's various components with predefined weights and biases."""
         # Class and bbox head init
