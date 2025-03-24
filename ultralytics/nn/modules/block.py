@@ -1106,3 +1106,27 @@ class SCDown(nn.Module):
     def forward(self, x):
         """Applies convolution and downsampling to the input tensor in the SCDown module."""
         return self.cv2(self.cv1(x))
+
+class Bottleneck3(nn.Module):
+    """Implements a bottleneck layer with optional shortcut for efficient feature extraction in neural networks."""
+
+    def __init__(self, c1, c2, mid_layer=None, shortcut=True, g=1, e=0.5):  # ch_in, ch_out, shortcut, groups, expansion
+        """Initializes a standard bottleneck layer with optional shortcut; args: input channels (c1), output channels
+        (c2), shortcut (bool), groups (g), expansion factor (e).
+        """
+        super().__init__()
+        if not mid_layer is None:
+            c_ = int(mid_layer)
+        else:
+            c_ = int(c2 * 6)  # hidden channels
+        self.cv1 = Conv(c1, c_, 1, 1)
+        self.cv2 = DWConv(c_, c_, 3, 1)
+        self.cv3 = Conv(c_, c2, 1, 1)
+        
+        self.add = shortcut and c1 == c2
+
+    def forward(self, x):
+        """Executes forward pass, performing convolutional ops and optional shortcut addition; expects input tensor
+        x.
+        """
+        return x + self.cv3(self.cv2(self.cv1(x))) if self.add else self.cv3(self.cv2(self.cv1(x)))
