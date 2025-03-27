@@ -146,6 +146,7 @@ datasets
 runs/
 wandb/
 .DS_Store
+thesis
 
 # Neural Network weights -----------------------------------------------------------------------------------------------
 weights

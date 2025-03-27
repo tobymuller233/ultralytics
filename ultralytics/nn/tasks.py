@@ -1041,6 +1041,10 @@ def attempt_load_one_weight(weight, device=None, inplace=True, fuse=False):
     args = {**DEFAULT_CFG_DICT, **(ckpt.get("train_args", {}))}  # combine model and default args, preferring model args
     model = (ckpt.get("ema") or ckpt["model"]).to(device).float()  # FP32 model
 
+    # cpu to cuda
+    if hasattr(model, "criterion"):
+        if isinstance(model.criterion, v8DetectionLoss):
+            model.criterion.proj = model.criterion.proj.to(device)
     # Model compatibility updates
     model.args = {k: v for k, v in args.items() if k in DEFAULT_CFG_KEYS}  # attach args to model
     model.pt_path = weight  # attach *.pt file path to model

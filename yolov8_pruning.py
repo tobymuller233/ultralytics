@@ -14,11 +14,11 @@ from matplotlib import pyplot as plt
 from ultralytics import YOLO, __version__
 from ultralytics.nn.modules import Detect, C2f, Conv, Bottleneck
 from ultralytics.nn.tasks import attempt_load_one_weight
-from ultralytics.yolo.engine.model import TASK_MAP
-from ultralytics.yolo.engine.trainer import BaseTrainer
-from ultralytics.yolo.utils import yaml_load, LOGGER, RANK, DEFAULT_CFG_DICT, DEFAULT_CFG_KEYS
-from ultralytics.yolo.utils.checks import check_yaml
-from ultralytics.yolo.utils.torch_utils import initialize_weights, de_parallel
+# from ultralytics.engine.model import task_map
+from ultralytics.engine.trainer import BaseTrainer
+from ultralytics.utils import yaml_load, LOGGER, RANK, DEFAULT_CFG_DICT, DEFAULT_CFG_KEYS
+from ultralytics.utils.checks import check_yaml 
+from ultralytics.utils.torch_utils import initialize_weights, de_parallel
 
 import torch_pruning as tp
 
@@ -247,7 +247,8 @@ def train_v2(self: YOLO, pruning=False, **kwargs):
         overrides['resume'] = self.ckpt_path
 
     self.task = overrides.get('task') or self.task
-    self.trainer = TASK_MAP[self.task][1](overrides=overrides, _callbacks=self.callbacks)
+    # self.trainer = self.task_map(task_map[self.task][1])(overrides=overrides, _callbacks=self.callbacks)
+    self.trainer = self._smart_load("trainer")(overrides=overrides, _callbacks=self.callbacks)
 
     if not pruning:
         if not overrides.get('resume'):  # manually set model only if not resuming
@@ -267,7 +268,7 @@ def train_v2(self: YOLO, pruning=False, **kwargs):
     self.trainer.train()
     # Update model and cfg after training
     if RANK in (-1, 0):
-        self.model, _ = attempt_load_one_weight(str(self.trainer.best))
+        self.model, _ = attempt_load_one_weight(str(self.trainer.best), device=self.device)
         self.overrides = self.model.args
         self.metrics = getattr(self.trainer.validator, 'metrics', None)
 
@@ -328,7 +329,7 @@ def prune(args):
         pruner = tp.pruner.GroupNormPruner(
             model.model,
             example_inputs,
-            importance=tp.importance.GroupMagnitudeImportance(),  # L2 norm pruning,
+            importance=tp.importance.GroupNormImportance(),  # L2 norm pruning, groupmagnitude
             iterative_steps=1,
             pruning_ratio=pruning_ratio,
             ignored_layers=ignored_layers,
